@@ -1,4 +1,5 @@
 # Copyright (c) 2012 Chris Moyer http://coredumped.org
+# Copyright (c) 2015 Saikat DebRoy <sdebroy@gmail.com>
 #
 # Permission is hereby granted, free of charge, to any person obtaining a
 # copy of this software and associated documentation files (the
