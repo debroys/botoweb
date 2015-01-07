@@ -4,3 +4,4 @@ botoweb.egg-info/
 build/
 dist/
 sphinx-build/
+*~
