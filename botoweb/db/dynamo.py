@@ -32,6 +32,8 @@ from boto.dynamodb import exceptions
 from boto.exception import DynamoDBResponseError, BotoServerError
 from base64 import b32decode, b32encode
 
+from botoweb.db.property import JSON
+
 import logging
 log = logging.getLogger('botoweb.db.dynamo')
 
@@ -104,11 +106,21 @@ class DynamoModel(Item):
 			return value
 		if isinstance(value, datetime):
 			value = value.strftime('%Y-%m-%dT%H:%M:%S')
+		elif isinstance(value, set):
+			# Make sure to convert all the items in the set first
+			value = set(self.convert(None, item) for item in value)
 		elif isinstance(value, list):
 			# Make sure to convert all the items in the list first
-			for x, item in enumerate(value):
-				value[x] = self.convert(key, item)
-			value = set(value)
+			for i, item in enumerate(value):
+				item = self.convert(None, item)
+				if not isinstance(item, basestring):
+					item = str(item)
+				value[i] = item
+			# As boto can not handle list types, we must encode it as a string
+			value = '\x1d'.join(value)
+		elif isinstance(value, JSON):
+			import json
+			value = json.dumps(value.value)
 		elif isinstance(value, DynamoModel):
 			value = value.id
 		elif isinstance(value, Model):
@@ -162,6 +174,27 @@ class DynamoModel(Item):
 	lookup = get_by_id
 
 	@classmethod
+	def convert_boto_raw_value(cls, boto_value):
+		from decimal import Decimal
+
+		value = boto_value
+		if isinstance(boto_value, dict):
+			if len(boto_value) == 1:
+				value_type, value = boto_value.items()
+				if value_type == 'M' and isinstance(value, dict):
+					value = dict((k, cls.convert_boto_raw_value(v))
+									 for (k, v) in value.iteritems())
+				elif value_type == 'L':
+					value = [cls.convert_boto_raw_value(v) for v in value]
+				elif value_type in ('S', 'N', 'B', 'BOOL', 'NULL', 'SS', 'NS', 'BS'):
+					pass
+				else:
+					value = boto_value
+		if isinstance(value, Decimal):
+			value = int(value)
+		return value
+
+	@classmethod
 	def query(cls, hash_key=None, range_key_condition=None,
 				request_limit=None, consistent_read=False,
 				scan_index_forward=True, **kwargs):
@@ -199,7 +232,6 @@ class DynamoModel(Item):
 		last_error = None
 		# Handle Keyword Searches
 		if kwargs:
-			from decimal import Decimal
 			from boto.dynamodb2.table import Table
 			tbl = Table(cls._table_name)
 			index_name = []
@@ -214,10 +246,7 @@ class DynamoModel(Item):
 				data = {}
 				for attr_name in item.keys():
 					val = item[attr_name]
-					if isinstance(val, Decimal):
-						val = int(val)
-					if isinstance(val, set):
-						val = list(val)
+					val = cls.convert_boto_raw_value(val)
 					data[attr_name] = val
 				yield cls.from_dict(data)
 		else:
@@ -350,17 +379,29 @@ class DynamoModel(Item):
 			try:
 				if hasattr(prop, 'data_type'):
 					# Decode lists
-					if prop.data_type == list:
-						# Singular values sometimes don't come out as lists, but as their
+					if prop.data_type == set:
+						# Singular values sometimes don't come out as lists/sets, but as their
 						# base value, like a String instead of a String Set
 						if not isinstance(ret, set) and not isinstance(ret, list):
 							ret = [ret]
-						# Sets aren't modifyable, so we need to convert it to a list instead
-						if isinstance(ret, set):
-							ret = list(ret)
 						if hasattr(prop, 'item_type'):
-							for x, val in enumerate(ret):
-								ret[x] = prop.item_type(val)
+							ret = set(prop.item_type(item) for item in ret)
+					elif prop.data_type == list:
+						# Lists can be encoded as a string with '\x1d' seperators
+						if isinstance(ret, basestring):
+							ret = ret.split('\x1d')
+						elif isinstance(ret, set):
+							ret = list(ret)
+						elif not isinstance(ret, list):
+							ret = [ret]
+						if hasattr(prop, 'item_type'):
+							for i, item in enumerate(ret):
+								ret[i] = prop.item_type(item)
+					elif prop.data_type == JSON:
+						if isinstance(ret, basestring):
+							import json
+							ret = json.loads(ret)
+						ret = JSON(ret)
 					# Decode Objects
 					elif hasattr(prop, 'reference_class'):
 						ret = prop.reference_class(ret)
@@ -378,6 +419,8 @@ class DynamoModel(Item):
 	def __setattr__(self, name, val):
 		prop = self.find_property(name)
 		if prop:
+			if val is not None and prop.data_type in (set, list, JSON) and not isinstance(val, prop.data_type):
+				val = prop.data_type(val)
 			self[name] = val
 		else:
 			Item.__setattr__(self, name, val)
