@@ -119,8 +119,7 @@ class DynamoModel(Item):
 			# As boto can not handle list types, we must encode it as a string
 			value = '\x1d'.join(value)
 		elif isinstance(value, JSON):
-			import json
-			value = json.dumps(value.value)
+			value = value.to_json()
 		elif isinstance(value, DynamoModel):
 			value = value.id
 		elif isinstance(value, Model):
@@ -399,9 +398,9 @@ class DynamoModel(Item):
 								ret[i] = prop.item_type(item)
 					elif prop.data_type == JSON:
 						if isinstance(ret, basestring):
-							import json
-							ret = json.loads(ret)
-						ret = JSON(ret)
+							ret = JSON.from_json(ret)
+						else:
+							ret = JSON(ret)
 					# Decode Objects
 					elif hasattr(prop, 'reference_class'):
 						ret = prop.reference_class(ret)

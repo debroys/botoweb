@@ -749,9 +749,11 @@ class MapProperty(Property):
 
 
 class JSON(object):
-	def __init__(self, value):
+	def __init__(self, value, validate=True):
 		if isinstance(value, JSON):
 			self.value = value.value
+		elif not validate:
+			self.value = value
 		else:
 			self.set(value)
 
@@ -762,6 +764,15 @@ class JSON(object):
 		except Exception as e:
 			raise ValueError('%s in %s JSONProperty' % (str(e), self.name))
 		self.value = value
+
+	@classmethod
+	def from_json(cls, string):
+		import json
+		return cls(json.loads(string), validate=False)
+
+	def to_json(self):
+		import json
+		return json.dumps(self.value)
 
 	def __eq__(self, other):
 		return other is not None and self.value == other.value
@@ -774,6 +785,9 @@ class JSON(object):
 
 	def __unicode__(self):
 		return unicode(self.value)
+
+	def __repr__(self):
+		return 'JSON({0})'.format(repr(self.value))
 
 	def __len__(self):
 		# Note: this fails if self.value is a number
