@@ -175,13 +175,20 @@ class Converter(object):
 	def decode_json(self, prop, value):
 		if isinstance(value, (set, list)):
 			if not value:
-				return value
+				return []
 			value = self.decode_map(prop, value)
-			if all(isinstance(k, (int, long)) for k in value):
-				if min(value.iterkeys()) == 0 and max(value.iterkeys()) == len(value) - 1:
-					# The keys are all distinct, the minimum is 0 and max is len(value) - 1
-					# So, keys == range(0, len(value)) and so, value must be a list
-					value = [value[k] for k in xrange(len(value))]
+			if (all(k.isdigit() and 0 <= int(k) <= 1000 for k in value) and
+				 min(int(k) for k in value) == 0 and
+				 max(int(k) for k in value) == len(value) - 1):
+				# The keys are all distinct, the minimum is 0 and max is len(value) - 1
+				# So, keys == range(0, len(value)) and so, value must be a list
+				new_value = [0] * len(value)
+				for k in value:
+					new_value[int(k)] = value[k]
+				value = new_value
+		elif isinstance(value, basestring) and '\x1d' in value:
+			# we may get a list with elements seperated by the GROUP SEPERATOR
+			value = value.split('\x1d')
 		else:
 			value = self.decode_json_item(value)
 		return value
