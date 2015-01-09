@@ -1,3 +1,4 @@
+# Copyright (c) 2015-2015 Saikat DebRoy <sdebroy@gmal.com>
 # Copyright (c) 2012-2013 Chris Moyer http://coredumped.org/
 # Copyright (c) 2006-2008 Mitch Garnaat http://garnaat.org/
 #
@@ -15,7 +16,7 @@
 # THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
 # OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABIL-
 # ITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-# SHALL THE AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, 
+# SHALL THE AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
 # WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 # IN THE SOFTWARE.
@@ -26,6 +27,7 @@ from botoweb.db.coremodel import Model
 from datetime import datetime
 from xml.dom.minidom import getDOMImplementation, parse, parseString, Node
 from botoweb.db.converter import Converter
+from botoweb.db.property import JSON
 from botoweb import ISO8601
 
 class XMLConverter(Converter):
@@ -48,7 +50,8 @@ class XMLConverter(Converter):
 						  Model : (self.encode_reference, self.decode_reference),
 						  Key : (self.encode_reference, self.decode_reference),
 						  Password : (self.encode_password, self.decode_password),
-						  datetime : (self.encode_datetime, self.decode_datetime)}
+						  datetime : (self.encode_datetime, self.decode_datetime),
+						  JSON: (self.encode_json, self.decode_json)}
 
 	def get_text_value(self, parent_node):
 		value = ''
@@ -72,7 +75,7 @@ class XMLConverter(Converter):
 		return value
 
 	def encode_prop(self, prop, value):
-		if isinstance(value, list):
+		if isinstance(value, (list, set)) and prop.data_type != JSON:
 			if hasattr(prop, 'item_type'):
 				new_value = []
 				for v in value:
@@ -87,7 +90,7 @@ class XMLConverter(Converter):
 			return self.encode(prop.data_type, value)
 
 	def decode_prop(self, prop, value):
-		if prop.data_type == list:
+		if prop.data_type in (set, list):
 			if hasattr(prop, 'item_type'):
 				item_type = getattr(prop, "item_type")
 				if Model in item_type.mro():
@@ -96,7 +99,10 @@ class XMLConverter(Converter):
 				for item_node in value.getElementsByTagName('item'):
 					value = self.decode(item_type, item_node)
 					values.append(value)
-				return values
+				if prop.data_type == set:
+					return set(values)
+				else:
+					return values
 			else:
 				return self.get_text_value(value)
 		else:
@@ -178,9 +184,22 @@ class XMLConverter(Converter):
 		value = self.get_text_value(value)
 		return Password(value)
 
+	def encode_json(self, value):
+		if value is None:
+			return ''
+		else:
+			return JSON(value).to_json()
+
+	def decode_json(self, value):
+		value = self.get_text_value(value)
+		if not value:
+			return None
+		else:
+			return JSON.from_json(value)
+
 
 class XMLManager(object):
-	
+
 	def __init__(self, cls, db_name, db_user, db_passwd,
 				 db_host, db_port, db_table, ddl_dir, enable_ssl):
 		self.cls = cls
@@ -261,7 +280,7 @@ class XMLManager(object):
 
 	def get_doc(self):
 		return self.doc
-			
+
 	def encode_value(self, prop, value):
 		return self.converter.encode_prop(prop, value)
 
@@ -325,8 +344,8 @@ class XMLManager(object):
 			if value != None:
 				props[prop.name] = value
 		return (cls, props, id)
-		
-		
+
+
 	def get_object(self, cls, id):
 		if not self.connection:
 			self._connect()
@@ -353,7 +372,7 @@ class XMLManager(object):
 		query = str(self._build_query(cls, filters, limit, order_by))
 		if query:
 			url = "/%s?%s" % (self.db_name, urlencode({"query": query}))
-		else: 
+		else:
 			url = "/%s" % self.db_name
 		resp = self._make_request('GET', url)
 		if resp.status == 200:
@@ -472,7 +491,7 @@ class XMLManager(object):
 		else:
 			doc = parse(fp)
 		return self.get_object_from_doc(cls, id, doc)
-	
+
 	def unmarshal_props(self, fp, cls=None, id=None):
 		"""
 		Same as unmarshalling an object, except it returns
@@ -500,7 +519,7 @@ class XMLManager(object):
 			return a[name]
 		else:
 			return None
-	
+
 	def get_raw_item(self, obj):
 		return self.domain.get_item(obj.id)
 
@@ -515,4 +534,3 @@ class XMLManager(object):
 			obj = obj.get_by_id(obj.id)
 			obj._loaded = True
 		return obj
-
