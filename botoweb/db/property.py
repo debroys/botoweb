@@ -752,10 +752,10 @@ class JSON(object):
 	def __init__(self, value, validate=True):
 		if isinstance(value, JSON):
 			self.value = value.value
-		elif not validate:
-			self.value = value
-		else:
+		elif validate:
 			self.set(value)
+		else:
+			self.value = value
 
 	def set(self, value):
 		import json
@@ -780,10 +780,10 @@ class JSON(object):
 		return json.dumps(self.value)
 
 	def __eq__(self, other):
-		return other is not None and self.value == other.value
+		return (isinstance(other, JSON) and self.value == other.value) or self.value == other
 
 	def __ne__(self, other):
-		return other is None or self.value != other.value
+		return (isinstance(other, JSON) and self.value != other.value) or self.value != other
 
 	def __str__(self):
 		return str(self.value)
@@ -821,11 +821,6 @@ class JSONProperty(Property):
 													  default=default, required=required, validator=validator,
 													  choices=choices, unique=unique)
 
-	def make_value_from_datastore(self, value):
-		if value is not None:
-			value = self.data_type(value)
-		return value
-
 	def get_value_for_datastore(self, model_instance):
 		value = super(JSONProperty, self).get_value_for_datastore(model_instance)
 		if isinstance(value, self.data_type):
@@ -833,12 +828,15 @@ class JSONProperty(Property):
 		return value
 
 	def __set__(self, obj, value):
-		if not (value is None or isinstance(value, self.data_type)):
+		if value is not None:
 			value = self.data_type(value)
 		super(JSONProperty, self).__set__(obj, value)
 
 	def __get__(self, obj, objtype):
-		return super(JSONProperty, self).__get__(obj, objtype)
+		value = super(JSONProperty, self).__get__(obj, objtype)
+		if value is not None:
+			value = value.value
+		return value
 
 	def default_validator(self, value):
 		if value is None or value == self.default_value():
