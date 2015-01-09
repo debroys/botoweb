@@ -1,3 +1,4 @@
+# Copyright (c) 2015 Saikat DebRoy <sdebroy@gmail.com>
 # Copyright (c) 2009 Chris Moyer http://coredumped.org
 #
 # Permission is hereby granted, free of charge, to any person obtaining a
@@ -28,11 +29,13 @@ from datetime import datetime as datetime_type
 from datetime import date
 from boto.utils import Password
 from botoweb.db.key import Key
+from botoweb.db.property import JSON
 
 TYPE_NAMES = {
 	str: "string",
 	unicode: "string",
 	int: "integer",
+	set: "set",
 	list: "list",
 	dict: "complexType",
 	datetime: "dateTime",
@@ -101,6 +104,9 @@ class XMLSerializer(object):
 	def encode_str(self, prop_name, prop_value, **params):
 		return self.encode_default(prop_name, prop_value, "string", **params)
 
+	def encode_json(self, prop_name, prop_value, **params):
+		return self.encode_default(prop_name, JSON(prop_value).to_json(), "json", **params)
+
 	def encode_int(self, prop_name, prop_value, **params):
 		return self.encode_default(prop_name, str(prop_value), "integer", **params)
 
@@ -108,6 +114,13 @@ class XMLSerializer(object):
 		"""Encode a list by encoding each property individually"""
 		for val in prop_value:
 			self.encode(prop_name, val)
+
+	def encode_set(self, prop_name, prop_value, **params):
+		"""Encode a set by encoding each item seperately"""
+		self.file.write("""<%s type="set">""" % prop_name)
+		for val in prop_value:
+			self.encode('item', val)
+		self.file.write("""</%s>""" % prop_name)
 
 	def encode_dict(self, prop_name, prop_value, **params):
 		"""Encode a dict by encoding each element individually with a name="" param"""
@@ -188,6 +201,7 @@ class XMLSerializer(object):
 		unicode: encode_str,
 		list: encode_list,
 		set: encode_list,
+		set: encode_set,
 		dict: encode_dict,
 		datetime: encode_datetime,
 		datetime_type: encode_datetime,
@@ -201,7 +215,7 @@ class XMLSerializer(object):
 		"""Dump this object to our serialization"""
 		from botoweb.db.coremodel import Model
 		from botoweb.db.dynamo import DynamoModel
-		from botoweb.db.property import CalculatedProperty, _ReverseReferenceProperty
+		from botoweb.db.property import CalculatedProperty, _ReverseReferenceProperty, JSONProperty
 		if not isinstance(obj, object):
 			if not objname:
 				objname = obj.__name__
@@ -223,12 +237,15 @@ class XMLSerializer(object):
 						if isinstance(prop, CalculatedProperty):
 							# We encode calculated properties similar to queries because we don't
 							# want them to be cached, or automatically sent
-							# since they're really something external and usually 
+							# since they're really something external and usually
 							# require an additional method call
 							self.file.write("""<%s calculated="true" type="%s" href="%s"/>""" % (prop.name, prop.calculated_type.__name__.lower(), prop.name))
 						elif isinstance(prop, _ReverseReferenceProperty):
 							# Query properties really shouldn't be dumped directly
 							self.file.write("""<%s calculated="true" type="%s" href="%s"/>""" % (prop.name, prop.item_type.__name__.lower(), prop.name))
+						elif isinstance(prop, JSONProperty):
+							# JSONProperty can be of many types and need to be handled separately
+							self.encode_json(prop.name, getattr(obj, prop.name))
 						else:
 							self.encode(prop.name, getattr(obj, prop.name))
 			else:
@@ -285,6 +302,9 @@ class XMLSerializer(object):
 		elif prop_type in ('complex', 'complextype', 'dict'):
 			# Dictionary
 			value = self.decode_dict(prop)
+		elif prop_type == 'set':
+			# Set
+			value = self.decode_set(prop)
 		elif prop_type in ('date', 'datetime', 'time'):
 			# Date Time
 			value = self.decode_datetime(prop)
@@ -299,6 +319,9 @@ class XMLSerializer(object):
 				value = ProxyObject()
 				value.__name__ = prop.get("item_type")
 				value.__id__ = prop.get("id")
+		elif prop_type == "json":
+			# JSON composite type
+			value = self.decode_json(prop)
 		elif prop.get("type") in REGISTERED_CLASSES.keys():
 			# Object (old style)
 			if prop.text:
@@ -331,11 +354,20 @@ class XMLSerializer(object):
 		except:
 			raise BadRequest("Invalid Value for datetime: %s" % date_str)
 
+	def decode_json(self, node):
+		ret = JSON.from_json(self.htmlparser.unescape(node.text)).value
+		return ret
+
 	def decode_dict(self, node):
 		"""Decode a dictionary (complexType)"""
 		r = {}
 		for k in node:
 			r[k.get("name")] = self.decode_prop(k)
+		return r
+
+	def decode_set(self, node):
+		"""Decode a set"""
+		r = set(self.decode_prop(v) for v in node)
 		return r
 
 
@@ -386,4 +418,3 @@ def register(cls, name=None):
 def get_class(class_name):
 	"""Get the class for this name"""
 	return REGISTERED_CLASSES.get(class_name)
-
